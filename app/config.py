@@ -70,6 +70,13 @@ class Settings(BaseSettings):
     OPENLIBRARY_ACCESS_KEY: Optional[SecretStr] = Field(default=None)
     OPENLIBRARY_SECRET_KEY: Optional[SecretStr] = Field(default=None)
     
+    # Download Queue
+    DOWNLOAD_DIR: str = Field(default="")
+    DOWNLOAD_QUEUE_ENABLED: bool = Field(default=True)
+    DOWNLOAD_AUTO_PROCESS: bool = Field(default=True)
+    DOWNLOAD_IDLE_SLEEP_SECONDS: int = Field(default=60)
+    DOWNLOAD_MAX_CONCURRENT: int = Field(default=3)
+    
     @property
     def postgres_dsn(self) -> str:
         user = quote(self.POSTGRESQL_DB_USER, safe="")

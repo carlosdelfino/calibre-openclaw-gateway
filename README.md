@@ -167,6 +167,342 @@ OPENLIBRARY_SECRET_KEY=
 - `OPENLIBRARY_BASE_URL`: OpenLibrary API base URL (default: https://openlibrary.org)
 - `OPENLIBRARY_ACCESS_KEY` and `OPENLIBRARY_SECRET_KEY`: Optional credentials for write operations (not required for read-only access)
 
+## Download Queue
+
+The server includes a download queue system for automatically downloading books from OpenLibrary/Archive.org.
+
+### Configuration
+
+Add the following to your `.env` file:
+
+```env
+# Download Queue Configuration
+DOWNLOAD_DIR=/path/to/download/directory
+DOWNLOAD_QUEUE_ENABLED=true
+DOWNLOAD_AUTO_PROCESS=true
+DOWNLOAD_IDLE_SLEEP_SECONDS=60
+DOWNLOAD_MAX_CONCURRENT=3
+```
+
+- `DOWNLOAD_DIR`: Directory where downloaded books will be saved (required)
+- `DOWNLOAD_QUEUE_ENABLED`: Enable/disable download queue (default: true)
+- `DOWNLOAD_AUTO_PROCESS`: Enable automatic processing of download queue (default: true)
+- `DOWNLOAD_IDLE_SLEEP_SECONDS`: Seconds to wait between queue checks when idle (default: 60)
+- `DOWNLOAD_MAX_CONCURRENT`: Maximum concurrent downloads (default: 3)
+
+### API Endpoints
+
+#### Add to Download Queue
+
+**POST** `/api/downloads/queue`
+
+Add a book to the download queue.
+
+```bash
+curl -X POST "http://127.0.0.1:6180/api/downloads/queue" \
+  -H "X-API-Key: $API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "title": "The Hobbit",
+    "author": "J.R.R. Tolkien",
+    "source": "openlibrary",
+    "olid": "OL266687W",
+    "ocaid": "hobbit00tolk_0",
+    "preferred_format": "PDF",
+    "priority": 10
+  }'
+```
+
+Request fields:
+- `title` (required): Book title
+- `author` (optional): Book author
+- `source` (required): Source type ('openlibrary' or 'archive')
+- `source_id` (optional): Source-specific ID
+- `olid` (optional): OpenLibrary ID
+- `ocaid` (optional): Archive.org identifier
+- `download_url` (optional): Direct download URL
+- `preferred_format` (optional): Preferred format (PDF, EPUB, Kindle, Daisy) - default: PDF
+- `priority` (optional): Download priority (0-100, higher = first) - default: 0
+
+#### Get Download Queue
+
+**GET** `/api/downloads/queue?status={status}&limit={limit}`
+
+Get download queue items with LLM-friendly structured response. This endpoint is designed for agent consumption to provide clear, structured information about the download queue status.
+
+```bash
+curl -H "X-API-Key: $API_KEY" \
+  "http://127.0.0.1:6180/api/downloads/queue?status=pending&limit=20"
+```
+
+Parameters:
+- `status`: Filter by status (pending, processing, completed, failed) - optional
+- `limit`: Maximum items to return (default: 50, max: 100)
+
+**LLM-Friendly Response Structure:**
+
+```json
+{
+  "success": true,
+  "statistics": {
+    "total": 10,
+    "pending": 3,
+    "processing": 2,
+    "completed": 5,
+    "failed": 0,
+    "added_to_calibre": 3
+  },
+  "items": [
+    {
+      "id": 1,
+      "title": "The Hobbit",
+      "author": "J.R.R. Tolkien",
+      "status": "completed",
+      "priority": 10,
+      "source": "openlibrary",
+      "preferred_format": "PDF",
+      "created_at": "2024-01-15T10:30:00",
+      "calibre_integration": {
+        "is_added_to_calibre": true,
+        "calibre_book_id": 456,
+        "added_at": "2024-01-15T11:00:00"
+      },
+      "download_info": {
+        "file_path": "/downloads/J.R.R. Tolkien - The Hobbit.pdf",
+        "file_size": 5242880,
+        "downloaded_at": "2024-01-15T10:45:00",
+        "error_message": null
+      },
+      "source_info": {
+        "olid": "OL266687W",
+        "ocaid": "hobbit00tolk_0",
+        "download_url": null
+      }
+    }
+  ],
+  "summary": "Download queue contains 10 items: 3 pending, 2 processing, 5 completed, 0 failed. Of the completed downloads, 3 have been added to Calibre.",
+  "filter_applied": "pending",
+  "limit": 20
+}
+```
+
+**Agent Usage Example:**
+
+The response includes a natural language `summary` field that agents can use directly, or construct custom responses using the structured data:
+
+```python
+response = requests.get("/api/downloads/queue?status=completed")
+data = response.json()
+
+# Use the pre-generated summary
+print(data["summary"])
+# Output: "Download queue contains 10 items: 3 pending, 2 processing, 5 completed, 0 failed. Of the completed downloads, 3 have been added to Calibre."
+
+# Or construct a custom response
+added_books = [item for item in data["items"] if item["calibre_integration"]["is_added_to_calibre"]]
+print(f"You have {len(added_books)} books ready in your Calibre library.")
+```
+
+#### Update Priority
+
+**PUT** `/api/downloads/queue/{item_id}/priority?priority={priority}`
+
+Update the priority of a download queue item.
+
+```bash
+curl -X PUT "http://127.0.0.1:6180/api/downloads/queue/123/priority?priority=50" \
+  -H "X-API-Key: $API_KEY"
+```
+
+#### Delete from Queue
+
+**DELETE** `/api/downloads/queue/{item_id}`
+
+Delete a download queue item.
+
+```bash
+curl -X DELETE "http://127.0.0.1:6180/api/downloads/queue/123" \
+  -H "X-API-Key: $API_KEY"
+```
+
+#### Retry Failed Download
+
+**POST** `/api/downloads/queue/{item_id}/retry`
+
+Retry a failed or completed download.
+
+```bash
+curl -X POST "http://127.0.0.1:6180/api/downloads/queue/123/retry" \
+  -H "X-API-Key: $API_KEY"
+```
+
+#### Mark as Added to Calibre
+
+**POST** `/api/downloads/queue/{item_id}/mark-added?calibre_book_id={calibre_book_id}`
+
+Mark a downloaded book as added to Calibre library. This endpoint is designed for LLM consumption to provide clear, structured responses about the book's status in the download-to-Calibre workflow.
+
+```bash
+curl -X POST "http://127.0.0.1:6180/api/downloads/queue/123/mark-added?calibre_book_id=456" \
+  -H "X-API-Key: $API_KEY"
+```
+
+**LLM-Friendly Response Structure:**
+
+```json
+{
+  "success": true,
+  "message": "Book successfully marked as added to Calibre",
+  "book": {
+    "title": "The Hobbit",
+    "author": "J.R.R. Tolkien",
+    "file_path": "/downloads/J.R.R. Tolkien - The Hobbit.pdf",
+    "file_size": 5242880,
+    "format": "PDF",
+    "source": "openlibrary",
+    "olid": "OL266687W",
+    "ocaid": "hobbit00tolk_0"
+  },
+  "calibre_integration": {
+    "calibre_book_id": 456,
+    "added_at": "2024-01-15T11:00:00",
+    "status": "integrated"
+  },
+  "timeline": {
+    "downloaded_at": "2024-01-15T10:45:00",
+    "added_to_calibre_at": "2024-01-15T11:00:00"
+  },
+  "next_actions": [
+    "The book is now available in your Calibre library",
+    "You can access it via Calibre with ID: 456",
+    "The book file is located at: /downloads/J.R.R. Tolkien - The Hobbit.pdf",
+    "You can now search for this book in the catalog"
+  ],
+  "summary": "The book 'The Hobbit' by J.R.R. Tolkien has been successfully downloaded from openlibrary and added to your Calibre library (ID: 456). The file is available at /downloads/J.R.R. Tolkien - The Hobbit.pdf."
+}
+```
+
+**Agent Usage Example:**
+
+The response includes a pre-generated `summary` field and `next_actions` array that agents can use to construct natural language responses:
+
+```python
+response = requests.post("/api/downloads/queue/123/mark-added?calibre_book_id=456")
+data = response.json()
+
+# Use the pre-generated summary
+print(data["summary"])
+# Output: "The book 'The Hobbit' by J.R.R. Tolkien has been successfully downloaded from openlibrary and added to your Calibre library (ID: 456). The file is available at /downloads/J.R.R. Tolkien - The Hobbit.pdf."
+
+# Or use the next_actions for step-by-step guidance
+for action in data["next_actions"]:
+    print(f"- {action}")
+```
+
+### Background Worker
+
+Run the download worker to automatically process the download queue:
+
+```bash
+cd /mnt/Backup_2/Biblioteca/calibre-openclaw-server
+python -m app.download_worker
+```
+
+The worker will:
+- Check for pending downloads at regular intervals
+- Download books from OpenLibrary/Archive.org
+- Save files to the configured DOWNLOAD_DIR
+- Update queue status (pending → processing → completed/failed)
+- Handle errors and retry failed downloads
+
+### Dashboard Integration
+
+The dashboard displays download queue status:
+- Pending, Processing, Completed, and Failed counts
+- Real-time updates via WebSocket
+- Statistics included in `/api/stats/database` endpoint
+
+### Download Sources
+
+The download queue supports:
+
+1. **OpenLibrary**: Books with `ocaid` field (Archive.org hosted)
+2. **Archive.org**: Direct Archive.org downloads
+3. **Direct URLs**: Custom download URLs
+
+When a book is added to the queue:
+- If `ocaid` is provided, the worker constructs Archive.org download URLs
+- If `download_url` is provided, it's used directly
+- The worker checks URL availability before downloading
+- Files are saved with sanitized filenames (Author - Title.format)
+- Each downloaded file gets a SHA256 hash for tracking
+
+### Download Availability
+
+The system automatically checks if a book can be downloaded automatically:
+
+- **download_available=true**: The book can be downloaded automatically by the worker
+- **download_available=false**: Automatic download is not available (e.g., no public domain copy)
+
+When `download_available=false`:
+- The book remains in the queue with status 'pending'
+- The worker skips it and processes other books
+- The user can download manually and mark it as completed
+- Use the `mark-manual-download` endpoint to track manual downloads
+
+### Manual Download Tracking
+
+When automatic download is not available, users can download books manually and track them:
+
+#### Mark Manual Download
+
+**POST** `/api/downloads/queue/{item_id}/mark-manual-download?file_path={path}&file_size={size}`
+
+Mark a book as manually downloaded when automatic download was not available.
+
+```bash
+curl -X POST "http://127.0.0.1:6180/api/downloads/queue/123/mark-manual-download?file_path=/path/to/book.pdf" \
+  -H "X-API-Key: $API_KEY"
+```
+
+The endpoint will:
+- Calculate the file's SHA256 hash automatically
+- Update the queue item status to 'completed'
+- Store the file path and hash for later matching
+- Return an LLM-friendly response with next steps
+
+#### Match Downloaded File
+
+**GET** `/api/downloads/match?file_hash={hash}` or `?file_path={path}`
+
+Match a downloaded file with the download queue to determine if it can be removed after being added to Calibre.
+
+```bash
+# Match by file hash (preferred)
+curl -H "X-API-Key: $API_KEY" \
+  "http://127.0.0.1:6180/api/downloads/match?file_hash=abc123..."
+
+# Match by file path (alternative)
+curl -H "X-API-Key: $API_KEY" \
+  "http://127.0.0.1:6180/api/downloads/match?file_path=/path/to/book.pdf"
+```
+
+The response includes:
+- Whether the file matches a queue item
+- The item's status and Calibre integration status
+- Whether the item can be removed from the queue (if already added to Calibre)
+- Next actions for the user
+
+**Workflow Example:**
+
+1. Agent searches for a book on OpenLibrary
+2. Book is added to queue with `download_available=false`
+3. User downloads the book manually
+4. Agent calls `mark-manual-download` to track the file
+5. User adds the book to Calibre
+6. Agent calls `mark-added` with the Calibre book ID
+7. Agent can now remove the item from the queue (optional cleanup)
+
 ### API Endpoints
 
 #### Enrich a Single Book

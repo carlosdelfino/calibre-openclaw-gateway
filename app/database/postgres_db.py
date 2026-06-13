@@ -182,12 +182,39 @@ class PostgreSQLDB:
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
             """,
+            """
+            CREATE TABLE IF NOT EXISTS download_queue (
+                id SERIAL PRIMARY KEY,
+                title TEXT NOT NULL,
+                author TEXT,
+                source TEXT NOT NULL,
+                source_id TEXT,
+                olid TEXT,
+                ocaid TEXT,
+                download_url TEXT,
+                preferred_format TEXT DEFAULT 'PDF',
+                status TEXT NOT NULL DEFAULT 'pending',
+                priority INTEGER NOT NULL DEFAULT 0,
+                error_message TEXT,
+                file_path TEXT,
+                file_size BIGINT,
+                file_hash TEXT,
+                download_available BOOLEAN DEFAULT true,
+                calibre_book_id INTEGER,
+                added_to_calibre_at TIMESTAMP,
+                started_at TIMESTAMP,
+                completed_at TIMESTAMP,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+            """,
             "CREATE INDEX IF NOT EXISTS idx_books_calibre_id ON books(calibre_id)",
             "CREATE INDEX IF NOT EXISTS idx_books_title ON books(title)",
             "CREATE INDEX IF NOT EXISTS idx_book_chunks_book_id ON book_chunks(book_id)",
             "CREATE INDEX IF NOT EXISTS idx_book_chunks_embedding ON book_chunks USING ivfflat (embedding vector_cosine_ops) WHERE embedding IS NOT NULL",
             "CREATE INDEX IF NOT EXISTS idx_processing_queue_status_priority ON processing_queue(status, priority DESC, created_at)",
             "CREATE INDEX IF NOT EXISTS idx_processing_queue_book_id ON processing_queue(book_id)",
+            "CREATE INDEX IF NOT EXISTS idx_download_queue_status_priority ON download_queue(status, priority DESC, created_at)",
+            "CREATE INDEX IF NOT EXISTS idx_download_queue_olid ON download_queue(olid)",
         ]
         with self.get_connection() as conn:
             cursor = conn.cursor()
@@ -1164,6 +1191,284 @@ class PostgreSQLDB:
                 }
                 for row in cursor.fetchall()
             ]
+    
+    # Download queue operations
+    def add_to_download_queue(self, title: str, author: Optional[str], source: str,
+                              source_id: Optional[str], olid: Optional[str], ocaid: Optional[str],
+                              download_url: Optional[str], preferred_format: str = "PDF",
+                              priority: int = 0, download_available: bool = True) -> int:
+        """Add a book to the download queue.
+        
+        Args:
+            title: Book title
+            author: Optional author
+            source: Source ('openlibrary' or 'archive')
+            source_id: Source-specific ID
+            olid: OpenLibrary ID
+            ocaid: Archive.org ID
+            download_url: Direct download URL
+            preferred_format: Preferred format
+            priority: Download priority
+            download_available: Whether automatic download is available
+            
+        Returns:
+            Queue item ID
+        """
+        query = """
+        INSERT INTO download_queue (
+            title, author, source, source_id, olid, ocaid, download_url,
+            preferred_format, status, priority, download_available
+        )
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 'pending', %s, %s)
+        RETURNING id
+        """
+        
+        with self.get_connection() as conn:
+            cursor = conn.cursor(cursor_factory=RealDictCursor)
+            cursor.execute(
+                query,
+                (title, author, source, source_id, olid, ocaid, download_url, preferred_format, priority, download_available)
+            )
+            result = cursor.fetchone()
+            logger.info(
+                f"Added to download queue: {title} (ID: {result['id']}, download_available: {download_available})",
+                extra={"operation": "download_queue_add", "queue_id": result['id'], "title": title, "download_available": download_available}
+            )
+            return result['id']
+    
+    def get_download_queue(self, status: Optional[str] = None, limit: int = 50) -> List[Dict[str, Any]]:
+        """Get download queue items.
+        
+        Args:
+            status: Filter by status (pending, processing, completed, failed)
+            limit: Maximum items to return
+            
+        Returns:
+            List of queue items
+        """
+        if status:
+            query = """
+            SELECT * FROM download_queue
+            WHERE status = %s
+            ORDER BY priority DESC, created_at
+            LIMIT %s
+            """
+            params = (status, limit)
+        else:
+            query = """
+            SELECT * FROM download_queue
+            ORDER BY priority DESC, created_at
+            LIMIT %s
+            """
+            params = (limit,)
+        
+        with self.get_connection() as conn:
+            cursor = conn.cursor(cursor_factory=RealDictCursor)
+            cursor.execute(query, params)
+            return cursor.fetchall()
+    
+    def get_download_queue_item(self, item_id: int) -> Optional[Dict[str, Any]]:
+        """Get a specific download queue item.
+        
+        Args:
+            item_id: Queue item ID
+            
+        Returns:
+            Queue item or None
+        """
+        query = "SELECT * FROM download_queue WHERE id = %s"
+        
+        with self.get_connection() as conn:
+            cursor = conn.cursor(cursor_factory=RealDictCursor)
+            cursor.execute(query, (item_id,))
+            return cursor.fetchone()
+    
+    def update_download_queue_status(self, item_id: int, status: str,
+                                     error_message: Optional[str] = None,
+                                     file_path: Optional[str] = None,
+                                     file_size: Optional[int] = None) -> bool:
+        """Update download queue item status.
+        
+        Args:
+            item_id: Queue item ID
+            status: New status
+            error_message: Optional error message
+            file_path: Optional downloaded file path
+            file_size: Optional file size
+            
+        Returns:
+            True if updated
+        """
+        if status == 'processing':
+            query = """
+            UPDATE download_queue
+            SET status = %s, started_at = CURRENT_TIMESTAMP
+            WHERE id = %s
+            """
+            params = (status, item_id)
+        elif status == 'completed':
+            query = """
+            UPDATE download_queue
+            SET status = %s, completed_at = CURRENT_TIMESTAMP,
+                file_path = %s, file_size = %s
+            WHERE id = %s
+            """
+            params = (status, file_path, file_size, item_id)
+        elif status == 'failed':
+            query = """
+            UPDATE download_queue
+            SET status = %s, error_message = %s, completed_at = CURRENT_TIMESTAMP
+            WHERE id = %s
+            """
+            params = (status, error_message, item_id)
+        else:
+            query = """
+            UPDATE download_queue
+            SET status = %s
+            WHERE id = %s
+            """
+            params = (status, item_id)
+        
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(query, params)
+            updated = cursor.rowcount > 0
+            if updated:
+                logger.info(f"Updated download queue item {item_id} to status: {status}")
+            return updated
+    
+    def update_download_queue_priority(self, item_id: int, priority: int) -> bool:
+        """Update download queue item priority.
+        
+        Args:
+            item_id: Queue item ID
+            priority: New priority
+            
+        Returns:
+            True if updated
+        """
+        query = "UPDATE download_queue SET priority = %s WHERE id = %s"
+        
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(query, (priority, item_id))
+            updated = cursor.rowcount > 0
+            if updated:
+                logger.info(f"Updated download queue item {item_id} priority to: {priority}")
+            return updated
+    
+    def delete_download_queue_item(self, item_id: int) -> bool:
+        """Delete a download queue item.
+        
+        Args:
+            item_id: Queue item ID
+            
+        Returns:
+            True if deleted
+        """
+        query = "DELETE FROM download_queue WHERE id = %s"
+        
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(query, (item_id,))
+            deleted = cursor.rowcount > 0
+            if deleted:
+                logger.info(f"Deleted download queue item {item_id}")
+            return deleted
+    
+    def get_next_pending_download(self) -> Optional[Dict[str, Any]]:
+        """Get the next pending download item (highest priority).
+        
+        Returns:
+            Queue item or None
+        """
+        query = """
+        SELECT * FROM download_queue
+        WHERE status = 'pending'
+        ORDER BY priority DESC, created_at
+        LIMIT 1
+        """
+        
+        with self.get_connection() as conn:
+            cursor = conn.cursor(cursor_factory=RealDictCursor)
+            cursor.execute(query)
+            return cursor.fetchone()
+    
+    def mark_added_to_calibre(self, item_id: int, calibre_book_id: int) -> bool:
+        """Mark a downloaded book as added to Calibre.
+        
+        Args:
+            item_id: Queue item ID
+            calibre_book_id: Calibre book ID
+            
+        Returns:
+            True if updated
+        """
+        query = """
+        UPDATE download_queue
+        SET calibre_book_id = %s, added_to_calibre_at = CURRENT_TIMESTAMP
+        WHERE id = %s
+        """
+        
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(query, (calibre_book_id, item_id))
+            updated = cursor.rowcount > 0
+            if updated:
+                logger.info(f"Marked download queue item {item_id} as added to Calibre (book_id: {calibre_book_id})")
+            return updated
+    
+    def _update_download_queue_file_hash(self, item_id: int, file_hash: str) -> bool:
+        """Update file hash for a download queue item.
+        
+        Args:
+            item_id: Queue item ID
+            file_hash: SHA256 hash of the downloaded file
+            
+        Returns:
+            True if updated
+        """
+        query = "UPDATE download_queue SET file_hash = %s WHERE id = %s"
+        
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(query, (file_hash, item_id))
+            updated = cursor.rowcount > 0
+            if updated:
+                logger.info(f"Updated file hash for download queue item {item_id}")
+            return updated
+    
+    def find_download_queue_by_file_hash(self, file_hash: str) -> Optional[Dict[str, Any]]:
+        """Find download queue item by file hash.
+        
+        Args:
+            file_hash: SHA256 hash of the file
+            
+        Returns:
+            Queue item or None
+        """
+        query = "SELECT * FROM download_queue WHERE file_hash = %s"
+        
+        with self.get_connection() as conn:
+            cursor = conn.cursor(cursor_factory=RealDictCursor)
+            cursor.execute(query, (file_hash,))
+            return cursor.fetchone()
+    
+    def find_download_queue_by_file_path(self, file_path: str) -> Optional[Dict[str, Any]]:
+        """Find download queue item by file path.
+        
+        Args:
+            file_path: Path to the file
+            
+        Returns:
+            Queue item or None
+        """
+        query = "SELECT * FROM download_queue WHERE file_path = %s"
+        
+        with self.get_connection() as conn:
+            cursor = conn.cursor(cursor_factory=RealDictCursor)
+            cursor.execute(query, (file_path,))
+            return cursor.fetchone()
 
 
 # Global instance

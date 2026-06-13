@@ -89,36 +89,92 @@ async def require_websocket_api_key(websocket: WebSocket) -> bool:
 
 @router.websocket("/ws/stats")
 async def websocket_stats(websocket: WebSocket):
-    """WebSocket endpoint for real-time statistics updates."""
+    """WebSocket endpoint for real-time statistics updates.
+    
+    Optimized to connect immediately and fetch data in parallel.
+    """
+    client_host = websocket.client.host if websocket.client else "unknown"
+    logger.info(f"[{client_host}] WebSocket connection attempt started")
+    
     if not await require_websocket_api_key(websocket):
+        logger.warning(f"[{client_host}] WebSocket authentication failed")
         return
+    
+    logger.info(f"[{client_host}] WebSocket authentication successful, connecting...")
     await manager.connect(websocket)
+    logger.info(f"[{client_host}] WebSocket connected successfully")
     
     try:
-        # Send initial stats
-        db_stats = await get_database_stats()
-        query_stats = await get_query_stats()
+        # Send connection acknowledgment immediately
+        ack_message = {
+            "type": "connected",
+            "timestamp": datetime.utcnow().isoformat()
+        }
+        logger.debug(f"[{client_host}] Sending connection acknowledgment")
+        sent = await manager.send_personal_message(json.dumps(ack_message), websocket)
+        if not sent:
+            logger.warning(f"[{client_host}] Failed to send connection ack, closing connection")
+            return
+        logger.debug(f"[{client_host}] Connection acknowledgment sent successfully")
         
-        initial_message = {
-            "type": "initial",
-            "data": {
-                "database": db_stats,
-                "queries": query_stats,
+        # Fetch initial stats in parallel
+        logger.debug(f"[{client_host}] Starting to fetch initial stats in parallel")
+        try:
+            import time
+            start_time = time.time()
+            
+            db_stats, query_stats = await asyncio.gather(
+                get_database_stats(),
+                get_query_stats()
+            )
+            
+            fetch_time = time.time() - start_time
+            logger.info(f"[{client_host}] Initial stats fetched in {fetch_time:.3f}s")
+            
+            initial_message = {
+                "type": "initial",
+                "data": {
+                    "database": db_stats,
+                    "queries": query_stats,
+                    "timestamp": datetime.utcnow().isoformat()
+                }
+            }
+            logger.debug(f"[{client_host}] Sending initial message (size: {len(json.dumps(initial_message))} bytes)")
+            sent = await manager.send_personal_message(json.dumps(initial_message), websocket)
+            if not sent:
+                logger.warning(f"[{client_host}] Failed to send initial message, closing connection")
+                return
+            logger.info(f"[{client_host}] Initial message sent successfully")
+        except Exception as e:
+            logger.error(f"[{client_host}] Error fetching initial stats: {e}", exc_info=True)
+            error_message = {
+                "type": "error",
+                "error": "Failed to fetch initial statistics",
                 "timestamp": datetime.utcnow().isoformat()
             }
-        }
-        sent = await manager.send_personal_message(json.dumps(initial_message), websocket)
-        if not sent:
-            logger.warning("Failed to send initial message, closing connection")
-            return
+            await manager.send_personal_message(json.dumps(error_message), websocket)
+            logger.warning(f"[{client_host}] Error message sent, keeping connection alive for retries")
+            # Don't close connection, allow periodic updates to try again
         
         # Send periodic updates every 5 seconds
+        update_count = 0
         while True:
             await asyncio.sleep(5)
+            update_count += 1
+            logger.debug(f"[{client_host}] Starting periodic update #{update_count}")
             
             try:
-                db_stats = await get_database_stats()
-                query_stats = await get_query_stats()
+                # Fetch stats in parallel
+                import time
+                start_time = time.time()
+                
+                db_stats, query_stats = await asyncio.gather(
+                    get_database_stats(),
+                    get_query_stats()
+                )
+                
+                fetch_time = time.time() - start_time
+                logger.debug(f"[{client_host}] Update #{update_count} stats fetched in {fetch_time:.3f}s")
                 
                 update_message = {
                     "type": "update",
@@ -130,19 +186,26 @@ async def websocket_stats(websocket: WebSocket):
                 }
                 sent = await manager.send_personal_message(json.dumps(update_message), websocket)
                 if not sent:
-                    logger.warning("Failed to send update message, closing connection")
+                    logger.warning(f"[{client_host}] Failed to send update message #{update_count}, closing connection")
                     break
+                logger.debug(f"[{client_host}] Update #{update_count} sent successfully")
             except Exception as e:
-                logger.error(f"Error fetching stats for WebSocket: {e}")
-                break
+                logger.error(f"[{client_host}] Error fetching stats for update #{update_count}: {e}", exc_info=True)
+                # Send error message but keep connection alive
+                error_message = {
+                    "type": "error",
+                    "error": "Failed to fetch statistics",
+                    "timestamp": datetime.utcnow().isoformat()
+                }
+                await manager.send_personal_message(json.dumps(error_message), websocket)
                 
     except asyncio.CancelledError:
-        logger.info("WebSocket connection cancelled during shutdown")
+        logger.info(f"[{client_host}] WebSocket connection cancelled during shutdown")
         manager.disconnect(websocket)
         raise
-    except WebSocketDisconnect:
+    except WebSocketDisconnect as e:
+        logger.info(f"[{client_host}] WebSocket client disconnected (code: {e.code}, reason: {e.reason})")
         manager.disconnect(websocket)
-        logger.info("WebSocket client disconnected")
     except Exception as e:
-        logger.error(f"WebSocket error: {e}", exc_info=True)
+        logger.error(f"[{client_host}] WebSocket error: {e}", exc_info=True)
         manager.disconnect(websocket)

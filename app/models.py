@@ -176,3 +176,50 @@ class SemanticSearchResponse(BaseModel):
     results: List[SearchResult]
     total_chunks: Optional[int] = None
     total_pages: Optional[int] = None
+
+
+class DownloadQueueItem(BaseModel):
+    """Model for download queue item."""
+    id: int
+    title: str
+    author: Optional[str] = None
+    source: str
+    source_id: Optional[str] = None
+    olid: Optional[str] = None
+    ocaid: Optional[str] = None
+    download_url: Optional[str] = None
+    preferred_format: str = "PDF"
+    status: str = "pending"
+    priority: int = 0
+    error_message: Optional[str] = None
+    file_path: Optional[str] = None
+    file_size: Optional[int] = None
+    file_hash: Optional[str] = None
+    download_available: bool = True
+    calibre_book_id: Optional[int] = None
+    added_to_calibre_at: Optional[datetime] = None
+    started_at: Optional[datetime] = None
+    completed_at: Optional[datetime] = None
+    created_at: datetime
+    
+    class Config:
+        from_attributes = True
+
+
+class DownloadQueueRequest(BaseModel):
+    """Request model for adding item to download queue."""
+    title: str = Field(..., min_length=1, description="Book title")
+    author: Optional[str] = Field(default=None, description="Book author")
+    source: str = Field(..., description="Source: 'openlibrary' or 'archive'")
+    source_id: Optional[str] = Field(default=None, description="Source-specific ID")
+    olid: Optional[str] = Field(default=None, description="OpenLibrary ID")
+    ocaid: Optional[str] = Field(default=None, description="Archive.org ID")
+    download_url: Optional[str] = Field(default=None, description="Direct download URL")
+    preferred_format: str = Field(default="PDF", description="Preferred format: PDF, EPUB, Kindle")
+    priority: int = Field(default=0, ge=0, le=100, description="Download priority (higher = first)")
+
+
+class DownloadQueueResponse(BaseModel):
+    """Response model for download queue operations."""
+    id: int
+    message: str

@@ -10,7 +10,7 @@ from contextlib import asynccontextmanager
 from app.config import settings
 from app.database.postgres_db import postgres_db
 from app.utils.logger import setup_logger, get_logger
-from app.api.routes import books, search, embeddings, stats, websocket
+from app.api.routes import books, search, embeddings, stats, websocket, downloads
 from app.services.book_service import book_service
 
 # Setup logger
@@ -324,6 +324,7 @@ app.include_router(search.router)
 app.include_router(embeddings.router)
 app.include_router(stats.router)
 app.include_router(websocket.router)
+app.include_router(downloads.router)
 if settings.ENABLE_NETWORK_BINDINGS_ENDPOINT:
     from app.api.routes import network
     app.include_router(network.router)

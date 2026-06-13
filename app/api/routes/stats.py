@@ -83,50 +83,41 @@ async def get_database_stats() -> Dict[str, Any]:
         with postgres_db.get_connection() as conn:
             cursor = conn.cursor()
             
-            # Total books
-            cursor.execute("SELECT COUNT(*) FROM books")
-            total_books = cursor.fetchone()[0]
-            
-            # Total chunks
-            cursor.execute("SELECT COUNT(*) FROM book_chunks")
-            total_chunks = cursor.fetchone()[0]
-            
-            # Chunks with embeddings
-            cursor.execute("SELECT COUNT(*) FROM book_chunks WHERE embedding IS NOT NULL")
-            chunks_with_embeddings = cursor.fetchone()[0]
-            
-            # Books with embeddings
+            # Combine queries for better performance
             cursor.execute("""
-                SELECT COUNT(DISTINCT book_id) 
-                FROM book_chunks 
-                WHERE embedding IS NOT NULL
+                SELECT 
+                    (SELECT COUNT(*) FROM books) as total_books,
+                    (SELECT COUNT(*) FROM book_chunks) as total_chunks,
+                    (SELECT COUNT(*) FROM book_chunks WHERE embedding IS NOT NULL) as chunks_with_embeddings,
+                    (SELECT COUNT(DISTINCT book_id) FROM book_chunks WHERE embedding IS NOT NULL) as books_with_embeddings,
+                    (SELECT COUNT(*) FROM processing_queue WHERE status = 'pending') as pending_queue,
+                    (SELECT COUNT(*) FROM processing_queue WHERE status = 'processing') as processing_queue,
+                    (SELECT COUNT(*) FROM processing_queue WHERE status = 'completed') as completed_queue,
+                    (SELECT COUNT(*) FROM processing_queue WHERE status = 'failed') as failed_queue,
+                    (SELECT COUNT(*) FROM download_queue WHERE status = 'pending') as download_pending,
+                    (SELECT COUNT(*) FROM download_queue WHERE status = 'processing') as download_processing,
+                    (SELECT COUNT(*) FROM download_queue WHERE status = 'completed') as download_completed,
+                    (SELECT COUNT(*) FROM download_queue WHERE status = 'failed') as download_failed,
+                    (SELECT COUNT(*) FROM books WHERE updated_at >= NOW() - INTERVAL '24 hours') as activity_24h
             """)
-            books_with_embeddings = cursor.fetchone()[0]
             
-            # Total embeddings stored
-            cursor.execute("SELECT COUNT(*) FROM book_chunks WHERE embedding IS NOT NULL")
-            total_embeddings = cursor.fetchone()[0]
+            row = cursor.fetchone()
             
-            # Processing queue stats
-            cursor.execute("SELECT COUNT(*) FROM processing_queue WHERE status = 'pending'")
-            pending_queue = cursor.fetchone()[0]
+            total_books = row[0]
+            total_chunks = row[1]
+            chunks_with_embeddings = row[2]
+            books_with_embeddings = row[3]
+            pending_queue = row[4]
+            processing_queue = row[5]
+            completed_queue = row[6]
+            failed_queue = row[7]
+            download_pending = row[8]
+            download_processing = row[9]
+            download_completed = row[10]
+            download_failed = row[11]
+            activity_24h = row[12]
             
-            cursor.execute("SELECT COUNT(*) FROM processing_queue WHERE status = 'processing'")
-            processing_queue = cursor.fetchone()[0]
-            
-            cursor.execute("SELECT COUNT(*) FROM processing_queue WHERE status = 'completed'")
-            completed_queue = cursor.fetchone()[0]
-            
-            cursor.execute("SELECT COUNT(*) FROM processing_queue WHERE status = 'failed'")
-            failed_queue = cursor.fetchone()[0]
-            
-            # Recent activity (last 24 hours)
-            cursor.execute("""
-                SELECT COUNT(*) 
-                FROM processing_queue 
-                WHERE created_at >= NOW() - INTERVAL '24 hours'
-            """)
-            recent_activity = cursor.fetchone()[0]
+            total_embeddings = chunks_with_embeddings
             
             # Storage size estimates
             cursor.execute("SELECT pg_total_relation_size('books') + pg_total_relation_size('book_chunks')")
@@ -168,8 +159,14 @@ async def get_database_stats() -> Dict[str, Any]:
                     "completed": completed_queue,
                     "failed": failed_queue
                 },
+                "download_queue": {
+                    "pending": download_pending,
+                    "processing": download_processing,
+                    "completed": download_completed,
+                    "failed": download_failed
+                },
                 "activity": {
-                    "last_24_hours": recent_activity
+                    "last_24_hours": activity_24h
                 },
                 "storage": {
                     "database_size_bytes": db_storage_size,
