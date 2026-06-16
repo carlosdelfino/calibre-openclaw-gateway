@@ -759,6 +759,8 @@ class PostgreSQLDB:
             b.title,
             b.author,
             b.metadata,
+            b.indexed_at,
+            b.updated_at,
             1 - (bc.embedding <=> %s::vector) as similarity
         FROM book_chunks bc
         JOIN books b ON bc.book_id = b.id

@@ -76,6 +76,9 @@ class SearchResult(BaseModel):
     page_end: Optional[int] = None
     section_title: Optional[str] = None
     citation: Optional[str] = None
+    # Book indexing timestamps
+    indexed_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
     # Additional book metadata (from Calibre)
     publisher: Optional[str] = None
     year: Optional[int] = None
