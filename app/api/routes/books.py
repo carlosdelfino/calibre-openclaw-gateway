@@ -3,8 +3,20 @@ from fastapi.responses import Response, StreamingResponse, JSONResponse
 from typing import Optional
 from pathlib import Path
 
-from app.models import BookResponse, BookListResponse, SyncResponse
+from app.models import (
+    BookFormatConversionRequest,
+    BookFormatConversionResponse,
+    BookResponse,
+    BookListResponse,
+    SyncResponse,
+)
 from app.services.book_service import book_service
+from app.services.format_conversion_service import (
+    BookNotFoundError,
+    BookResolutionError,
+    FormatConversionError,
+    format_conversion_service,
+)
 from app.services.virus_service import virus_service
 from app.utils.logger import get_logger
 from app.config import settings
@@ -139,6 +151,31 @@ async def sync_status():
         raise calibre_db_unavailable_response(e)
     except Exception as e:
         logger.error(f"Error checking sync status: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@router.post("/convert-format", response_model=BookFormatConversionResponse)
+async def convert_book_format(request: BookFormatConversionRequest):
+    """Convert a Calibre book to another format and register it in Calibre."""
+    try:
+        result = format_conversion_service.convert_and_register(
+            book_id=request.book_id,
+            calibre_id=request.calibre_id,
+            title=request.title,
+            target_format=request.target_format,
+            source_format=request.source_format,
+            force=request.force,
+        )
+        return BookFormatConversionResponse(**result)
+    except BookNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except BookResolutionError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except FormatConversionError as e:
+        logger.error(f"Book format conversion failed: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+    except Exception as e:
+        logger.error(f"Unexpected book format conversion error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Internal server error")
 
 

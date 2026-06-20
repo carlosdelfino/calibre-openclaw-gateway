@@ -168,6 +168,31 @@ class SyncResponse(BaseModel):
     message: str
 
 
+class BookFormatConversionRequest(BaseModel):
+    """Request model for converting and registering a Calibre book format."""
+    book_id: Optional[int] = Field(default=None, description="Internal OpenClaw/PostgreSQL book ID")
+    calibre_id: Optional[int] = Field(default=None, description="Native Calibre book ID")
+    title: Optional[str] = Field(default=None, description="Exact book title when it uniquely identifies one book")
+    target_format: str = Field(..., min_length=1, description="Requested output format")
+    source_format: Optional[str] = Field(default=None, description="Optional preferred source format")
+    force: bool = Field(default=False, description="Replace/recreate the target format if it already exists")
+
+
+class BookFormatConversionResponse(BaseModel):
+    """Response model for a format conversion and registration operation."""
+    success: bool
+    message: str
+    book_id: Optional[int] = None
+    calibre_id: int
+    title: str
+    source_format: Optional[str] = None
+    target_format: str
+    output_path: Optional[str] = None
+    already_available: bool = False
+    registered: bool = False
+    synced_count: int = 0
+
+
 class ErrorResponse(BaseModel):
     """Response model for errors."""
     error: str
