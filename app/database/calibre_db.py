@@ -374,6 +374,34 @@ class CalibreDB:
             return None
 
     @staticmethod
+    def get_book_formats(calibre_id: int) -> List[Dict[str, Any]]:
+        """Get every registered file format for a Calibre book."""
+        query = """
+        SELECT b.path, d.name, d.format
+        FROM data d
+        JOIN books b ON d.book = b.id
+        WHERE b.id = ?
+        ORDER BY d.format
+        """
+
+        try:
+            with get_calibre_db() as conn:
+                cursor = conn.cursor()
+                cursor.execute(query, (calibre_id,))
+                rows = [dict(row) for row in cursor.fetchall()]
+                return [
+                    {
+                        "path": f"{row['path']}/{row['name']}.{row['format'].lower()}",
+                        "name": row["name"],
+                        "format": row["format"].upper(),
+                    }
+                    for row in rows
+                ]
+        except Exception as e:
+            logger.error(f"Error retrieving formats for book {calibre_id}: {e}")
+            return []
+
+    @staticmethod
     def get_book_file_path(calibre_id: int) -> Optional[str]:
         """Get the file path for the best available book format."""
         info = CalibreDB.get_book_file_info(calibre_id)

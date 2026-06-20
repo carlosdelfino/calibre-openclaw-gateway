@@ -13,6 +13,8 @@ class BookResponse(BaseModel):
     file_size: Optional[int] = None
     file_type: Optional[str] = None
     metadata: Optional[Dict[str, Any]] = None
+    selected_format: Optional[str] = None
+    available_formats: List[str] = Field(default_factory=list)
     indexed_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
     # Additional metadata fields (from Calibre)
@@ -79,6 +81,8 @@ class SearchResult(BaseModel):
     # Book indexing timestamps
     indexed_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
+    selected_format: Optional[str] = None
+    available_formats: List[str] = Field(default_factory=list)
     # Additional book metadata (from Calibre)
     publisher: Optional[str] = None
     year: Optional[int] = None
@@ -191,6 +195,26 @@ class BookFormatConversionResponse(BaseModel):
     already_available: bool = False
     registered: bool = False
     synced_count: int = 0
+
+
+class BookFormatInfoResponse(BaseModel):
+    """Details about one format available for a Calibre book."""
+    format: str
+    filename: str
+    media_type: str
+    size: Optional[int] = None
+    exists: bool = False
+    selected: bool = False
+
+
+class BookFormatsResponse(BaseModel):
+    """Response model for formats available for a book."""
+    book_id: int
+    calibre_id: Optional[int] = None
+    title: str
+    selected_format: Optional[str] = None
+    available_formats: List[str] = Field(default_factory=list)
+    formats: List[BookFormatInfoResponse] = Field(default_factory=list)
 
 
 class ErrorResponse(BaseModel):

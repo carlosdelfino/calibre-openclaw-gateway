@@ -456,6 +456,9 @@ class PostgreSQLDB:
                 metadata = json.loads(metadata)
             except:
                 metadata = {}
+
+        book['selected_format'] = metadata.get('selected_format')
+        book['available_formats'] = metadata.get('available_formats') or []
         
         # Extract publisher
         publishers = metadata.get('publishers', [])

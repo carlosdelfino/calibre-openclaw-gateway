@@ -6,6 +6,7 @@ from pathlib import Path
 from app.models import (
     BookFormatConversionRequest,
     BookFormatConversionResponse,
+    BookFormatsResponse,
     BookResponse,
     BookListResponse,
     SyncResponse,
@@ -274,6 +275,21 @@ async def list_recent_books(limit: int = Query(default=10, ge=1, le=50)):
         raise HTTPException(status_code=500, detail="Internal server error")
 
 
+@router.get("/{book_id}/formats", response_model=BookFormatsResponse)
+async def get_book_formats(book_id: int):
+    """Get the formats currently registered for a Calibre book."""
+    try:
+        format_info = book_service.get_book_formats(book_id)
+        if not format_info:
+            raise HTTPException(status_code=404, detail="Book not found")
+        return BookFormatsResponse(**format_info)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting formats for book {book_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
 @router.get("/{book_id}", response_model=BookResponse)
 async def get_book(book_id: int):
     """Get a specific book by ID."""
@@ -356,12 +372,13 @@ async def get_book_pdf(
 @router.get("/{book_id}/file")
 async def get_book_file(
     book_id: int,
+    format: Optional[str] = Query(default=None, description="Preferred registered format to download, e.g. EPUB, PDF, AZW3"),
     check_virus: bool = Query(default=False, description="Enable virus scanning using VirusTotal API")
 ):
-    """Get the book file in the selected available Calibre format."""
+    """Get the book file in the selected or requested available Calibre format."""
     try:
         require_content_downloads_enabled()
-        file_info = book_service.get_book_file(book_id)
+        file_info = book_service.get_book_file(book_id, preferred_format=format)
         if not file_info:
             raise HTTPException(status_code=404, detail="Book file not found")
 

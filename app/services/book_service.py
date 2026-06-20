@@ -264,8 +264,16 @@ class BookService:
         logger.info(f"[book_service.py:search_books:256] Search completed - total={len(merged_results)}, postgres={len(postgres_results)}, new_from_calibre={len(new_books)}")
         return merged_results
 
-    def _book_file_path(self, book_id: int) -> Optional[Path]:
+    def _book_file_path(self, book_id: int, preferred_format: Optional[str] = None) -> Optional[Path]:
         book = postgres_db.get_book_by_id(book_id)
+        if preferred_format and book and book.get("calibre_id"):
+            file_info = self.calibre_db.get_book_file_info(
+                int(book["calibre_id"]),
+                preferred_format=preferred_format,
+            )
+            if file_info and file_info.get("format") == preferred_format.upper():
+                return self.library_path / file_info["path"]
+            return None
         if book and book.get('file_path'):
             return Path(book['file_path'])
         return None
@@ -286,9 +294,49 @@ class BookService:
             return file_path
         return None
 
-    def get_book_file_info(self, book_id: int) -> Optional[Dict[str, Any]]:
+    def get_book_formats(self, book_id: int) -> Optional[Dict[str, Any]]:
+        """Get every available Calibre format for a book."""
+        book = postgres_db.get_book_by_id(book_id)
+        if not book:
+            return None
+
+        calibre_id = book.get("calibre_id")
+        metadata = book.get("metadata", {}) or {}
+        if isinstance(metadata, str):
+            try:
+                metadata = json.loads(metadata)
+            except Exception:
+                metadata = {}
+        selected_format = metadata.get("selected_format")
+        formats = []
+
+        if calibre_id:
+            for item in self.calibre_db.get_book_formats(int(calibre_id)):
+                full_path = self.library_path / item["path"]
+                formats.append(
+                    {
+                        "format": item["format"],
+                        "filename": full_path.name,
+                        "media_type": self._book_media_type(full_path),
+                        "size": full_path.stat().st_size if full_path.exists() else None,
+                        "exists": full_path.exists(),
+                        "selected": item["format"] == selected_format,
+                    }
+                )
+
+        available_formats = [item["format"] for item in formats]
+        return {
+            "book_id": book_id,
+            "calibre_id": calibre_id,
+            "title": book.get("title"),
+            "selected_format": selected_format,
+            "available_formats": available_formats,
+            "formats": formats,
+        }
+
+    def get_book_file_info(self, book_id: int, preferred_format: Optional[str] = None) -> Optional[Dict[str, Any]]:
         """Get metadata for the selected available book file."""
-        file_path = self._book_file_path(book_id)
+        file_path = self._book_file_path(book_id, preferred_format=preferred_format)
         if not file_path or not file_path.exists():
             return None
         return {
@@ -313,9 +361,9 @@ class BookService:
             return conversion_service.get_pdf_bytes(pdf_path)
         return None
 
-    def get_book_file(self, book_id: int) -> Optional[Dict[str, Any]]:
+    def get_book_file(self, book_id: int, preferred_format: Optional[str] = None) -> Optional[Dict[str, Any]]:
         """Get the selected available book file and response metadata."""
-        info = self.get_book_file_info(book_id)
+        info = self.get_book_file_info(book_id, preferred_format=preferred_format)
         if info:
             info["data"] = conversion_service.get_file_bytes(info["path"])
             return info

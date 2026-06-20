@@ -127,6 +127,7 @@ async def lifespan(app: FastAPI):
     print(f"  - GET  /api/books/sync         - Sync books from Calibre")
     print(f"  - GET  /api/books/sync/status  - Check sync status")
     print(f"  - GET  /api/books/{{id}}         - Get book details")
+    print(f"  - GET  /api/books/{{id}}/formats - Get available book formats")
     print(f"  - GET  /api/books/{{id}}/cover   - Get book cover (JPG)")
     print(f"  - GET  /api/books/{{id}}/file    - Get selected available book file")
     print(f"  - GET  /api/books/{{id}}/pdf     - Get complete PDF")
