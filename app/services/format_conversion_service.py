@@ -115,7 +115,7 @@ class FormatConversionService:
         if not calibredb:
             raise FormatConversionError("calibredb was not found in PATH.")
 
-        with tempfile.TemporaryDirectory(prefix="openclaw-calibre-convert-") as tmp_dir:
+        with tempfile.TemporaryDirectory(prefix="openclaw-calibre-converter-") as tmp_dir:
             output_path = Path(tmp_dir) / f"{input_path.stem}.{target_format.lower()}"
             self._run_command(
                 [
